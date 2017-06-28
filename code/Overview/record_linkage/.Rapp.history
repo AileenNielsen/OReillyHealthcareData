@@ -1,0 +1,1131 @@
+a = c('sex', 'race', 'age')
+expand.grid(a, a)
+install.packages('utils')
+lcombn
+combn
+a
+a = c('sex', 'race', 'age', 'region', 'language', 'nonsense')
+combn(a, 3)
+comb = combn(a, 3)
+class(comb)
+comb[1]
+attributes(comb)
+comb[[1]]
+comb[[1,]]
+comb[[1,c(1:#)]]
+''
+]
+comb[[1,c(1:3)]]
+comb[1, ]
+comb[20]
+comb
+comb[ ,1]
+comb[ ,2]
+comb[ ,2][3]
+class(comb[ ,2])
+length(comb[, 2])
+#### Set up Space#
+rm(list=ls())#
+options(java.parameters="-Xmx8g")#
+#
+library(survey)#
+library(RJDBC)#
+library(data.table)#
+vDriver = JDBC(driverClass="com.vertica.jdbc.Driver", classPath="/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(vDriver, "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics", "cc_nielsena", "l5iLbeeKLrb6fA6O")#
+#
+# If you modify the list of states of interest, you also need to add a matching state specific term in the relevant section below#
+states_of_interest <- c('CO','FL','IA', 'MI','MN','NC', 'NH','NV','OH','PA','VA','WI')#
+educ_csv_path <- "/Users/anielsen/Desktop/all_states.csv"#
+#
+################################UTILITIES#########################################
+generate_all_combinations <- function(factors_to_combine, number_factors_to_include, sep_char = "||'|'||") {#
+  combos <- combn(factors_to_combine, number_factors_to_include)#
+  number_combos <- dim(combos)[2]#
+  return_sql_list <- lapply(seq_len(number_combos), function(i) { #
+    list_words <- combos[, i]#
+    paste(list_words, collapse = sep_char)#
+  })#
+  return_column_list <- lapply(1:number_combos, function(i) { #
+    list_words <- combos[, i]#
+    list_words <- paste0(list_words, 'D')#
+    paste(list_words, collapse = '_')#
+  })#
+  return_words_list <- lapply(1:number_combos, function(i) { #
+    combos[, i]#
+  })#
+  return (list(return_sql_list, return_column_list, return_words_list))#
+}#
+#################################################################################
+################################STATE SPECIFIC TERMS#########################################
+CO <- c('age_bucket_5way', 'vote_history_bucket_2way_general', 'support_bucket', 'vote_history_bucket_2way_general')#
+FL <- c('age_bucket_5way')#
+IA <- c('age_bucket_5way')#
+MI <- c('age_bucket_5way')#
+MN <- c('age_bucket_5way')#
+NC <- c('age_bucket_5way')#
+NH <- c('age_bucket_5way')#
+NV <- c('age_bucket_5way')#
+OH <- c('age_bucket_5way')#
+PA <- c('age_bucket_5way')#
+VA <- c('age_bucket_5way')#
+WI <- c('age_bucket_5way')#
+##############################################################################################
+################################TERM SPECIFIC NULLS#########################################
+term_specific_nulls <- list()#
+term_specific_nulls['age_bucket_5way'] <- 'ruh-roh'#
+term_specific_nulls['sex'] <- 'U'#
+term_specific_nulls['support_bucket'] <- 'zUnscored'#
+##############################################################################################
+#
+#for (i in 1:length(states_of_interest)) {#
+for (i in 1:1) {#
+  current_state <- states_of_interest[i]#
+  terms_vector <- get(current_state)#
+  #return_list <- generate_all_combinations(terms_vector, length(terms_vector))#
+  return_list <- generate_all_combinations(terms_vector, 2)#
+  sql_terms <- return_list[[1]]#
+  column_names <- return_list[[2]]#
+  words_list <- return_list[[3]]#
+  # Generate 'WHERE' condition as necessary for specific terms and their specific null values#
+  query_results_list <- list()#
+  for (j in 1:length(sql_terms)) {#
+    print("working on this sql term ")#
+    print(sql_terms[j])#
+    nulls_to_add_to_sql <- as.character()#
+    for (k in 1:length(words_list[[j]])) {#
+    	print("now checking this term ")#
+    	print(words_list[k])#
+    	tested_word = words_list[[j]][k]#
+      if (tested_word %in% names(term_specific_nulls)) {#
+        nulls_to_add_to_sql <- c(nulls_to_add_to_sql, tested_word)#
+        print("that word is in specific nulls to add")#
+      } else {#
+      	print("that word IS NOT in specific nulls to add")#
+      }#
+    }#
+    print("here are term specific nulls terms")#
+    print(names(term_specific_nulls))#
+    nulls_to_add_to_sql <- as.character(nulls_to_add_to_sql)#
+    specific_null_terms_query_addition <- " WHERE "#
+    if (length(nulls_to_add_to_sql) > 0) {#
+      for (k in 1:length(nulls_to_add_to_sql)) {#
+        add_string <- paste0(nulls_to_add_to_sql[k], " <> '", term_specific_nulls[[nulls_to_add_to_sql[k]]], "' AND ")#
+        specific_null_terms_query_addition <- paste0(specific_null_terms_query_addition, add_string)#
+      }#
+    }#
+    print("specific null query terms are ")#
+    print(specific_null_terms_query_addition)#
+   dt <- setDT(dbGetQuery(vertica, paste0("SELECT custom_state_code||'|'||", sql_terms[[j]] ," as ", column_names[[j]],#
+                                                            ", SUM(turnout_g2016_score)/SUM(SUM(turnout_g2016_score)) OVER() AS FREQ#
+                                                            FROM hfa_polling_stg.tmp_univ_20160801", #
+                                                            specific_null_terms_query_addition,#
+                                                            "custom_state_code = '", current_state, "'#
+                                                            group by 1#
+                                                            order by 1;")))#
+  query_results_list[[j]] <-dt#
+#
+  }#
+#
+  GE_education <- fread(educ_csv_path, header = TRUE, sep=",")#
+  # tktk not sure this conversion is necessary#
+  GE_education <- GE_education[grepl(current_state, state_college_educ)]#
+  GE_education[, state_college_educ:= as.character(state_college_educ)]#
+  # Bring in poll data -- brings in#
+  # tktktk this also has to be modified#
+  selection_string <- " "#
+  for (k in seq_along(sql_terms)) {#
+    new_string <- paste0("custom_state_code||'|'||", sql_terms[[k]] ," as ", column_names[[k]]," , ")#
+    selection_string <- paste0(selection_string, new_string)#
+  }#
+  #selection_string <- substr(selection_string,1,nchar(selection_string)-2)#
+  selection_string <- paste0(selection_string, " state_code||'|'||(case when qeducation::INT in (3, 6, 7) then 1 else 0 end) as state_college_educ ")#
+  GE2poll <- setDT(dbGetQuery(vertica, paste0("SELECT m.*,",#
+                                             selection_string,#
+                                             "FROM hfa_polling_weighted.internal_ge_20160724_20160801_weighted_ev_party_ed_ssts2016_rev4 m#
+                                             where state_code = '", current_state, "'#
+                                             and support_bucket <> 'zUnscored'#
+                                             and qhorse_djt::INT < 8;")))#
+  #Create survey design object from poll data#
+  GE2poll.des <- svydesign(id=~1, weights=~rel_weight_new_ev_other_adj, data=GE2poll)#
+  GE2poll.des#
+  # preparing list of data tables as raking function parameter#
+  rake_population_margins_dts <- query_results_list#
+  rake_population_margins_dts[[length(rake_population_margins_dts) + 1]] <- GE_education#
+  # preparing list of formulae for sample margins#
+  column_names <- c(column_names, 'state_college_educ')#
+  rake_sample_margins <- lapply(column_names, function(cn) {#
+    as.formula(paste0("~", cn))#
+  })#
+  #rake_sample_margins[[length(rake_sample_margins) + 1]] <- as.formula("~state_college_educ")#
+  print("here are rake dts")#
+  print(rake_population_margins_dts)#
+  print("here are rake sample margins")#
+  print(rake_sample_margins)#
+  #Rake Function#
+  GE2poll.rake <- rake(design            = GE2poll.des, #
+                      sample.margins    = rake_sample_margins,#
+                      population.margins= rake_population_margins_dts)#
+  GE2poll.rake#
+  # tktktk what to do with this output since we'll be looping without time to pause and review?#
+print(prop.table(svytable(~qhorse_djt+state_code, GE2poll.rake), 2))#
+}
+## Script for automatically modeling flakes#
+#
+##Set our basic parameters and load us some libraries#
+options(java.parameters = "-Xmx4g" )#
+`%notin%` <- function(x,y) !(x %in% y)#
+library(ROCR)#
+library(glmnet)#
+library(jsonlite)#
+library(RJDBC)#
+library(doMC)
+vDriver = JDBC(driverClass="com.vertica.jdbc.Driver",classPath="/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(vDriver, "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics", "cc_nielsena", "l5iLbeeKLrb6fA6O")
+## Function for calculating AUC#
+calc_AUC <- function(obs, pred, plotROC=FALSE) {#
+  roc.pred<-prediction(pred, obs)#
+  if (plotROC) {#
+    roc.perf <- performance(roc.pred, measure="tpr", x.measure="fpr")#
+    plot(roc.perf)#
+    abline(a=0,b=1)#
+  }#
+  return(performance(roc.pred, "auc")@y.values[[1]])#
+}#
+#
+## MO CORES MO POWER#
+registerDoMC(cores=4)#
+#
+##Pull the data and run the model#
+d = dbGetQuery(vertica, "select * from hfa_basefile.flake_model_basefile#
+               where prob_white is not null and date(eventdate) > '2016-05-01' order by random() limit 25000")#
+d$holdout = runif(nrow(d))#
+test <- d[d$holdout > .8,]#
+train <- d[d$holdout < .8, ]
+class(test)
+head(test)
+formula = as.formula( ~ #Demographic factors#
+                        sex_male + age_bucket_fine +#
+                        prob_afam + prob_white + prob_hispanic + prob_asian +#
+                        on_email_list_high + #
+                        donated_16 + donated_16_many +#
+                        donated_16_hh_notyou + donated_08_any +#
+                        cell_high + ncoa_since_regdate +#
+                        ##Contextual features#
+                        census_hh_income_index + first_name_social_class_index + last_name_social_class_index +#
+                        vap_annual_turnover_rate + census_pct_college + pct_pop_english_lng +#
+                        ##Voting history#
+                        vote_g2014 + vote_g2014_novote_eligible +#
+                        vote_g2012 + vote_g2012_novote_eligible +#
+                        vote_g2010 + vote_g2010_novote_eligible +#
+                        vote_g2008 + vote_g2008_novote_eligible +#
+                        reg_years_bucket +#
+                        ##Vol history (predating current cycle) & HH history#
+                        midterm_vol + pres_vol + #
+                        ever_volunteer_2012 + ever_volunteer_2008 +#
+                        hh_ever_volunteer_2012 + hh_ever_volunteer_2008 + hh_ever_volunteer_hrc +#
+                        non_midterm_vol_in_vol_hh + non_pres_vol_in_vol_hh +#
+                        vol_workevent_hh_notyou + vol_nonworkevent_hh_notyou +#
+                        events_hh_notyou + multiple_events_hh_notyou +#
+                        ## Event Invite Metadata#
+                        event_days_before_election + scheduled_days_before_event + confirmed + event_type +#
+                        ## Should we include contact history?#
+                        num_contact_attempts + any_successful_contacts + no_contact_success +#
+                        ## Current Cycle Vol History#
+                        prior_shifts + prior_non_vol_events + prior_one_on_one +#
+                        prior_no_shows + prior_declines)
+formula
+mm_train <- model.matrix(formula,data=train)
+mm_train
+class(mm_train)
+dim(mm_train)
+dim(formula)
+formula
+77 - 42 - 6
+dim(train)
+names(train)
+dim(train)
+len(names(train))
+length(names(train))
+dim(mm_train)
+train$flaked[1:10]
+class(mm_train)
+a = matrix(1, 2, 3, 4, 5, 6, 2, 3)
+a = matrix(1, 2, 3, 4, 5)
+a = matrix(c(1:6), 2, 3)
+a
+a[ , -1]
+a[ -1, ]
+a[ -2, ]
+cvmn <- cv.glmnet(mm_train[ , -1], train$flaked, family="binomial", nlambda=60, #
+                            standardize=TRUE, type.measure="auc", nfold=10,alpha=.5, parallel=TRUE)
+mm_test <- model.matrix(formula,data=test)#
+test$flake_risk <- predict(cvmn, newx=mm_test[ , -1], type="response", s=cvmn$lambda.min)
+coef(cvmn, s=cvmn$lambda.min)
+calc_AUC(test$flaked, test$flake_risk,TRUE)
+coefs <- coef(cvmn, s=cvmn$lambda.min)#
+coef_json <- list()#
+coef_json$variables <- dimnames(coefs)[[1]]#
+coef_json$values <- unname(coefs[,1])#
+coef_json$possible_indep_vars <- names(train)
+coef_json
+#### Set up Space#
+rm(list=ls())#
+options(java.parameters="-Xmx8g")#
+#
+library(survey)#
+library(RJDBC)#
+library(data.table)#
+vDriver = JDBC(driverClass="com.vertica.jdbc.Driver", classPath="/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(vDriver, "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics", "cc_nielsena", "l5iLbeeKLrb6fA6O")#
+#
+# If you modify the list of states of interest, you also need to add a matching state specific term in the relevant section below#
+states_of_interest <- c( 'OH','PA','VA','WI')#
+#notworking: 'NH','NV',#
+#working:'CO','FL','IA', 'MI','MN','NC',#
+educ_csv_path <- "/Users/anielsen/Desktop/all_states.csv"#
+#
+################################UTILITIES#########################################
+generate_all_combinations <- function(factors_to_combine, number_factors_to_include, sep_char = "||'|'||") {#
+  combos <- combn(factors_to_combine, number_factors_to_include)#
+  number_combos <- dim(combos)[2]#
+  return_sql_list <- lapply(seq_len(number_combos), function(i) { #
+    list_words <- combos[, i]#
+    paste(list_words, collapse = sep_char)#
+  })#
+  return_column_list <- lapply(1:number_combos, function(i) { #
+    list_words <- combos[, i]#
+    list_words <- paste0(list_words, 'D')#
+    paste(list_words, collapse = '_')#
+  })#
+  return_words_list <- lapply(1:number_combos, function(i) { #
+    combos[, i]#
+  })#
+  return (list(return_sql_list, return_column_list, return_words_list))#
+}#
+#################################################################################
+################################STATE SPECIFIC TERMS#########################################
+CO <- c('age_bucket_5way', 'combined_ethnicity_3way', 'support_bucket' , 'vote_history_bucket_2way_general') # #
+FL <- c('age_bucket_5way')#
+IA <- c('age_bucket_5way')#
+MI <- c('age_bucket_5way')#
+MN <- c('age_bucket_5way')#
+NC <- c('age_bucket_5way')#
+NH <- c('age_bucket_5way')#
+NV <- c('age_bucket_5way')#
+OH <- c('age_bucket_5way')#
+PA <- c('age_bucket_5way')#
+VA <- c('age_bucket_5way')#
+WI <- c('age_bucket_5way')#
+##############################################################################################
+################################TERM SPECIFIC NULLS#########################################
+term_specific_nulls <- list()#
+term_specific_nulls['age_bucket_5way'] <- 'ruh-roh'#
+term_specific_nulls['sex'] <- 'U'#
+term_specific_nulls['support_bucket'] <- 'zUnscored'#
+##############################################################################################
+#
+for (i in 1:length(states_of_interest)) {#
+#for (i in 1:1) {#
+	i = 1#
+  current_state <- states_of_interest[i]#
+  terms_vector <- get(current_state)#
+  #return_list <- generate_all_combinations(terms_vector, length(terms_vector))#
+  return_list <- generate_all_combinations(terms_vector, min(2, length(terms_vector)))#
+  sql_terms <- return_list[[1]]#
+  column_names <- return_list[[2]]#
+  words_list <- return_list[[3]]#
+  # Generate 'WHERE' condition as necessary for specific terms and their specific null values#
+  query_results_list <- list()#
+  for (j in 1:length(sql_terms)) {#
+    print("working on this sql term ")#
+    print(sql_terms[j])#
+    nulls_to_add_to_sql <- as.character()#
+    for (k in 1:length(words_list[[j]])) {#
+    	print("now checking this term ")#
+    	print(words_list[k])#
+    	tested_word = words_list[[j]][k]#
+      if (tested_word %in% names(term_specific_nulls)) {#
+        nulls_to_add_to_sql <- c(nulls_to_add_to_sql, tested_word)#
+        print("that word is in specific nulls to add")#
+      } else {#
+      	print("that word IS NOT in specific nulls to add")#
+      }#
+    }#
+    print("here are term specific nulls terms")#
+    print(names(term_specific_nulls))#
+    nulls_to_add_to_sql <- as.character(nulls_to_add_to_sql)#
+    specific_null_terms_query_addition <- " WHERE "#
+    if (length(nulls_to_add_to_sql) > 0) {#
+      for (k in 1:length(nulls_to_add_to_sql)) {#
+        add_string <- paste0(nulls_to_add_to_sql[k], " <> '", term_specific_nulls[[nulls_to_add_to_sql[k]]], "' AND ")#
+        specific_null_terms_query_addition <- paste0(specific_null_terms_query_addition, add_string)#
+      }#
+    }#
+    print("specific null query terms are ")#
+    print(specific_null_terms_query_addition)#
+   dt <- setDT(dbGetQuery(vertica, paste0("SELECT custom_state_code||'|'||", sql_terms[[j]] ," as ", column_names[[j]],#
+                                                            ", SUM(turnout_g2016_score)/SUM(SUM(turnout_g2016_score)) OVER() AS FREQ#
+                                                            FROM hfa_polling_stg.tmp_univ_20160801", #
+                                                            specific_null_terms_query_addition,#
+                                                            "custom_state_code = '", current_state, "'#
+                                                            group by 1#
+                                                            order by 1;")))#
+  query_results_list[[j]] <-dt#
+#
+  }#
+#
+  GE_education <- fread(educ_csv_path, header = TRUE, sep=",")#
+  # tktk not sure this conversion is necessary#
+  GE_education <- GE_education[grepl(current_state, state_college_educ)]#
+  GE_education[, state_college_educ:= as.character(state_college_educ)]#
+  # Bring in poll data -- brings in#
+  # tktktk this also has to be modified#
+  selection_string <- " "#
+  for (k in seq_along(sql_terms)) {#
+    new_string <- paste0("custom_state_code||'|'||", sql_terms[[k]] ," as ", column_names[[k]]," , ")#
+    selection_string <- paste0(selection_string, new_string)#
+  }#
+  #selection_string <- substr(selection_string,1,nchar(selection_string)-2)#
+  selection_string <- paste0(selection_string, " state_code||'|'||(case when qeducation::INT in (3, 6, 7) then 1 else 0 end) as state_college_educ ")#
+  GE2poll <- setDT(dbGetQuery(vertica, paste0("SELECT m.*,",#
+                                             selection_string,#
+                                             "FROM hfa_polling_weighted.internal_ge_20160724_20160801_weighted_ev_party_ed_ssts2016_rev4 m#
+                                             where state_code = '", current_state, "'#
+                                             and support_bucket <> 'zUnscored'#
+                                             and qhorse_djt::INT < 8;")))#
+  #Create survey design object from poll data#
+  GE2poll.des <- svydesign(id=~1, weights=~rel_weight_new_ev_other_adj, data=GE2poll)#
+  GE2poll.des#
+  # preparing list of data tables as raking function parameter#
+  rake_population_margins_dts <- query_results_list#
+  rake_population_margins_dts[[length(rake_population_margins_dts) + 1]] <- GE_education#
+  # preparing list of formulae for sample margins#
+  column_names <- c(column_names, 'state_college_educ')#
+  rake_sample_margins <- lapply(column_names, function(cn) {#
+    as.formula(paste0("~", cn))#
+  })#
+  #rake_sample_margins[[length(rake_sample_margins) + 1]] <- as.formula("~state_college_educ")#
+  print("here are rake dts")#
+  print(rake_population_margins_dts)#
+  print("here are rake sample margins")#
+  print(rake_sample_margins)#
+  #Rake Function#
+  GE2poll.rake <- rake(design            = GE2poll.des, #
+                      sample.margins    = rake_sample_margins,#
+                      population.margins= rake_population_margins_dts)#
+  GE2poll.rake#
+  # tktktk what to do with this output since we'll be looping without time to pause and review?#
+print(prop.table(svytable(~qhorse_djt+state_code, GE2poll.rake), 2))#
+}
+ls
+shut up honey
+c("a", "a", "b" ,"c", "a", "c")
+ditch = c("a", "a", "b" ,"c", "a", "c")
+match(ditch, ditch)
+# COMPARE SUPPORT#
+  vDriver = JDBC(driverClass = "com.vertica.jdbc.Driver", classPath = "/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+  vertica = dbConnect(#
+    vDriver,#
+    "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics",#
+    Sys.getenv("DATABASE_USERNAME"),#
+    Sys.getenv("DATABASE_PASSWORD")#
+  )#
+  getuniverse = function(strata) {#
+    strata_specification = paste0(strata, collapse = "||'|'||")#
+    query = paste("select state_code, ", strata_specification, "as stratum,",#
+                  "sum(projection_turnout*projection_support)/sum(projection_turnout) as stratum_support, ",#
+                  "sum(projection_turnout)/sum(sum(projection_turnout)) over(partition by state_code) as electorate_pct ",#
+                  "from hfa_basefile.gak_universe group by 1, 2 order by 1,2")#
+  }
+MARGINAL.STORAGE.DIRECTORY   <- "~/Desktop/SURVEY STRESS TEST/marginals/"#
+SIM.STORAGE.DIRECTORY        <- "~/Desktop/SURVEY STRESS TEST/sims/"#
+REGRESSION.STORAGE.DIRECTORY <- "~/Desktop/SURVEY STRESS TEST/regs/"#
+USE.NAMES        <- sort(c("sex_female", 'age_bucket_polling',#
+                           'ethnicity_3way_plus_ed_support'))#
+DATE.VAR         <- "poll_date"#
+ROLLUP.FREQUENCY <- "%j"#
+NUM.DAYS         <- 3#
+OUTCOME          <- "any_hrc"#
+POINT.MOVE       <- .00#
+NUM.ITERATIONS   <- max(floor(as.numeric(diffti
+))
+USE.NAMES        <- sort(c("sex_female", 'age_bucket_polling',#
+                           'ethnicity_3way_plus_ed_support'))#
+#
+# COMPARE SUPPORT#
+vDriver = JDBC(driverClass = "com.vertica.jdbc.Driver", classPath = "/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(#
+  vDriver,#
+  "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics",#
+  Sys.getenv("DATABASE_USERNAME"),#
+  Sys.getenv("DATABASE_PASSWORD")#
+)#
+#
+getuniverse = function(strata) {#
+  strata_specification = paste0(strata, collapse =  "||'|'||")#
+  query = paste("select state_code, ", strata_specification, "as stratum,",#
+                "sum(projection_turnout*projection_support)/sum(projection_turnout) as stratum_support, ",#
+                "sum(projection_turnout)/sum(sum(projection_turnout)) over(partition by state_code) as electorate_pct ",#
+                "from hfa_basefile.gak_universe group by 1, 2 order by 1,2")#
+}#
+# SEE IF MARGINALS ARE ALREADY STORED LOCALLY, OTHERWISE GRAB THEM FROM GAK UNIVERSE#
+strata_specification = paste0(USE.NAMES, collapse = "||'|'||")#
+FILE.NAME = paste0(MARGINAL.STORAGE.DIRECTORY, strata_specification,".csv")#
+if (file.exists(FILE.NAME)) {#
+  dt <- fread(FILE.NAME)#
+  print("read locally")#
+} else {#
+  dt <- setDT(dbGetQuery(vertica, getuniverse(USE.NAMES)))#
+  write.csv(dt, FILE.NAME)#
+  print("retrieved remotely")#
+}
+library(RJDBC)#
+USE.NAMES        <- sort(c("sex_female", 'age_bucket_polling',#
+                           'ethnicity_3way_plus_ed_support'))#
+#
+# COMPARE SUPPORT#
+vDriver = JDBC(driverClass = "com.vertica.jdbc.Driver", classPath = "/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(#
+  vDriver,#
+  "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics",#
+  Sys.getenv("DATABASE_USERNAME"),#
+  Sys.getenv("DATABASE_PASSWORD")#
+)#
+#
+getuniverse = function(strata) {#
+  strata_specification = paste0(strata, collapse =  "||'|'||")#
+  query = paste("select state_code, ", strata_specification, "as stratum,",#
+                "sum(projection_turnout*projection_support)/sum(projection_turnout) as stratum_support, ",#
+                "sum(projection_turnout)/sum(sum(projection_turnout)) over(partition by state_code) as electorate_pct ",#
+                "from hfa_basefile.gak_universe group by 1, 2 order by 1,2")#
+}#
+# SEE IF MARGINALS ARE ALREADY STORED LOCALLY, OTHERWISE GRAB THEM FROM GAK UNIVERSE#
+strata_specification = paste0(USE.NAMES, collapse = "||'|'||")#
+FILE.NAME = paste0(MARGINAL.STORAGE.DIRECTORY, strata_specification,".csv")#
+if (file.exists(FILE.NAME)) {#
+  dt <- fread(FILE.NAME)#
+  print("read locally")#
+} else {#
+  dt <- setDT(dbGetQuery(vertica, getuniverse(USE.NAMES)))#
+  write.csv(dt, FILE.NAME)#
+  print("retrieved remotely")#
+}
+library(RJDBC)#
+USE.NAMES        <- sort(c("sex_female", 'age_bucket_polling',#
+                           'ethnicity_3way_plus_ed_support'))#
+MARGINAL.STORAGE.DIRECTORY <- "~/Desktop/SURVEY STRESS TEST/marginals/"#
+# COMPARE SUPPORT#
+vDriver = JDBC(driverClass = "com.vertica.jdbc.Driver", classPath = "/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(#
+  vDriver,#
+  "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics",#
+  Sys.getenv("DATABASE_USERNAME"),#
+  Sys.getenv("DATABASE_PASSWORD")#
+)#
+#
+getuniverse = function(strata) {#
+  strata_specification = paste0(strata, collapse =  "||'|'||")#
+  query = paste("select state_code, ", strata_specification, "as stratum,",#
+                "sum(projection_turnout*projection_support)/sum(projection_turnout) as stratum_support, ",#
+                "sum(projection_turnout)/sum(sum(projection_turnout)) over(partition by state_code) as electorate_pct ",#
+                "from hfa_basefile.gak_universe group by 1, 2 order by 1,2")#
+}#
+# SEE IF MARGINALS ARE ALREADY STORED LOCALLY, OTHERWISE GRAB THEM FROM GAK UNIVERSE#
+strata_specification = paste0(USE.NAMES, collapse = "||'|'||")#
+FILE.NAME = paste0(MARGINAL.STORAGE.DIRECTORY, strata_specification,".csv")#
+if (file.exists(FILE.NAME)) {#
+  dt <- fread(FILE.NAME)#
+  print("read locally")#
+} else {#
+  dt <- setDT(dbGetQuery(vertica, getuniverse(USE.NAMES)))#
+  write.csv(dt, FILE.NAME)#
+  print("retrieved remotely")#
+}
+library(RJDBC)#
+library(data.table)#
+USE.NAMES        <- sort(c("sex_female", 'age_bucket_polling',#
+                           'ethnicity_3way_plus_ed_support'))#
+MARGINAL.STORAGE.DIRECTORY <- "~/Desktop/SURVEY STRESS TEST/marginals/"#
+# COMPARE SUPPORT#
+vDriver = JDBC(driverClass = "com.vertica.jdbc.Driver", classPath = "/Users/anielsen/Documents/vertica-jdbc-7.1.2-0.jar")#
+vertica = dbConnect(#
+  vDriver,#
+  "jdbc:vertica://vertica-rr-int.hfa.dnc.org:5433/analytics",#
+  Sys.getenv("DATABASE_USERNAME"),#
+  Sys.getenv("DATABASE_PASSWORD")#
+)#
+#
+getuniverse = function(strata) {#
+  strata_specification = paste0(strata, collapse =  "||'|'||")#
+  query = paste("select state_code, ", strata_specification, "as stratum,",#
+                "sum(projection_turnout*projection_support)/sum(projection_turnout) as stratum_support, ",#
+                "sum(projection_turnout)/sum(sum(projection_turnout)) over(partition by state_code) as electorate_pct ",#
+                "from hfa_basefile.gak_universe group by 1, 2 order by 1,2")#
+}#
+# SEE IF MARGINALS ARE ALREADY STORED LOCALLY, OTHERWISE GRAB THEM FROM GAK UNIVERSE#
+strata_specification = paste0(USE.NAMES, collapse = "||'|'||")#
+FILE.NAME = paste0(MARGINAL.STORAGE.DIRECTORY, strata_specification,".csv")#
+if (file.exists(FILE.NAME)) {#
+  dt <- fread(FILE.NAME)#
+  print("read locally")#
+} else {#
+  dt <- setDT(dbGetQuery(vertica, getuniverse(USE.NAMES)))#
+  write.csv(dt, FILE.NAME)#
+  print("retrieved remotely")#
+}
+dt
+unique(dt$state_code)
+length(unique(dt$state_code))
+#PROBABILISTIC RECORD LINKAGE#
+require(RecordLinkage)#
+#
+online.data = read.csv('online_data.csv')#
+neighborhood.data = read.csv('neighborhood_data.csv')#
+data = read.csv('data.csv')
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+#
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))
+online.data = read.csv('online_data.csv')#
+neighborhood.data = read.csv('neighborhood_data.csv')#
+data = read.csv('data.csv')
+setwd('~/Desktop/OReillyHealthcareData/code/Overview/record_linkage/')
+#PROBABILISTIC RECORD LINKAGE#
+require(RecordLinkage)#
+#
+online.data = read.csv('online_data.csv')#
+neighborhood.data = read.csv('neighborhood_data.csv')#
+data = read.csv('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+#
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+#
+# empirically, typos occur more frequently later in words than earlier, so we 'block' on first letter of first and last names#
+data$initials <- paste(substring(data$firstname,1,1), substring(data$surname, 1, 1), sep = '')#
+neighborhood.data$initials <- paste(substring(neighborhood.data$firstname,1,1), substring(neighborhood.data$surname, 1, 1), sep = '')#
+online.data$initials <- paste(substring(online.data$firstname,1,1), substring(online.data$surname, 1, 1), sep = '')
+setwd('~/Desktop/OReillyHealthcareData/code/Overview/record_linkage/')#
+#PROBABILISTIC RECORD LINKAGE#
+require(RecordLinkage)#
+#
+online.data = read.csv('online_data.csv')#
+neighborhood.data = read.csv('neighborhood_data.csv')#
+data = read.csv('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+#
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+#
+# empirically, typos occur more frequently later in words than earlier, so we 'block' on first letter of first and last names#
+data$initials <- paste(substring(data$firstname,1,1), substring(data$surname, 1, 1), sep = '')#
+neighborhood.data$initials <- paste(substring(neighborhood.data$firstname,1,1), substring(neighborhood.data$surname, 1, 1), sep = '')#
+online.data$initials <- paste(substring(online.data$firstname,1,1), substring(online.data$surname, 1, 1), sep = '')
+head(onlline.data)
+setwd('~/Desktop/OReillyHealthcareData/code/Overview/record_linkage/')#
+#PROBABILISTIC RECORD LINKAGE#
+require(RecordLinkage)#
+#
+online.data = read.csv('online_data.csv')#
+neighborhood.data = read.csv('neighborhood_data.csv')#
+data = read.csv('data.csv')
+online.data
+head(online.data)
+equire(data.table)
+require(data.table)
+online.data = fread('online_data.csv')#
+neighborhood.data = fread('neighborhood_data.csv')#
+data = fread('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+#
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+#
+# empirically, typos occur more frequently later in words than earlier, so we 'block' on first letter of first and last names#
+data$initials <- paste(substring(data$firstname,1,1), substring(data$surname, 1, 1), sep = '')#
+neighborhood.data$initials <- paste(substring(neighborhood.data$firstname,1,1), substring(neighborhood.data$surname, 1, 1), sep = '')#
+online.data$initials <- paste(substring(online.data$firstname,1,1), substring(online.data$surname, 1, 1), sep = '')
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))
+head(data)
+#PROBABILISTIC RECORD LINKAGE#
+require(RecordLinkage)#
+require(data.table)#
+#
+online.data = fread('online_data.csv')#
+neighborhood.data = fread('neighborhood_data.csv')#
+data = fread('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))
+require(RecordLinkage)#
+require(data.table)#
+#
+online.data = fread('online_data.csv')#
+neighborhood.data = fread('neighborhood_data.csv')#
+data = fread('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+#
+# empirically, typos occur more frequently later in words than earlier, so we 'block' on first letter of first and last names#
+data$initials <- paste(substring(data$firstname,1,1), substring(data$surname, 1, 1), sep = '')#
+neighborhood.data$initials <- paste(substring(neighborhood.data$firstname,1,1), substring(neighborhood.data$surname, 1, 1), sep = '')#
+online.data$initials <- paste(substring(online.data$firstname,1,1), substring(online.data$surname, 1, 1), sep = '')
+# if first names and birthdate matche#
+combined.data.using.firstname = merge(data, online.data, by = c("firstname", "birthdate"))#
+combined.data.using.firstname$surname = combined.data.using.firstname$surname.x#
+#
+# if last name and birthdate matches#
+combined.data.using.surname = merge(data, online.data, by = c("surname", "birthdate"))#
+combined.data.using.surname$firstname = combined.data.using.surname$firstname.x#
+#
+# combine both options (since it's either or)#
+combined.data = rbind(combined.data.using.firstname[, c("firstname", "surname", "birthdate", "zip_codes")], combined.data.using.surname[, c("firstname", "surname", "birthdate", "zip_codes")])#
+dim(combined.data)#
+combined.data = unique(combined.data)#
+dim(combined.data)
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x)#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y)#
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y#
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)#
+dim(all_combos)#
+#
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]#
+dim(all_combos)
+all_combos = all_combos[with(all_combos, order(surname.x, firstname.x)), ]
+dim(all_combos)#
+dim(unique(all_combos[, c('firstname.x', 'surname.x')]))
+dim(unique(all_combos[, c('firstname.x', 'surname.x'), with = FALSE]))
+all_combos[, c('firstname.x', 'surname.x'), with = FALSE]
+all_combos[, .(firstname.x, surname.x), with = FALSE]
+all_combos[, .(firstname.x, surname.x)]
+class(all_combos)
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]
+head(all_combos)
+online.data = online.data[1:1000, ] # to keep it small
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)
+head(all_combos)
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x)#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y)#
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x)
+help(as.Date)
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%M/%d/%Y")
+head(all_combos)
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%M/%d/%Y")
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)
+dim(all_combos)#
+#
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]#
+dim(all_combos)
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")#
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y#
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)#
+dim(all_combos)
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]#
+dim(all_combos)
+setwd('~/Desktop/OReillyHealthcareData/code/Overview/record_linkage/')#
+#
+# DATA PREP#
+#
+require(RecordLinkage)#
+require(data.table)#
+#
+online.data = fread('online_data.csv')#
+neighborhood.data = fread('neighborhood_data.csv')#
+data = fread('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+#
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+#
+# empirically, typos occur more frequently later in words than earlier, so we 'block' on first letter of first and last names#
+data$initials <- paste(substring(data$firstname,1,1), substring(data$surname, 1, 1), sep = '')#
+neighborhood.data$initials <- paste(substring(neighborhood.data$firstname,1,1), substring(neighborhood.data$surname, 1, 1), sep = '')#
+online.data$initials <- paste(substring(online.data$firstname,1,1), substring(online.data$surname, 1, 1), sep = '')#
+#DETERMINISTIC HEURISTIC RECORD LINKAGE#
+#
+# if first names and birthdate matche#
+combined.data.using.firstname = merge(data, online.data, by = c("firstname", "birthdate"))#
+combined.data.using.firstname$surname = combined.data.using.firstname$surname.x#
+#
+# if last name and birthdate matches#
+combined.data.using.surname = merge(data, online.data, by = c("surname", "birthdate"))#
+combined.data.using.surname$firstname = combined.data.using.surname$firstname.x#
+#
+# combine both options (since it's either or)#
+combined.data = rbind(combined.data.using.firstname[, c("firstname", "surname", "birthdate", "zip_codes")], combined.data.using.surname[, c("firstname", "surname", "birthdate", "zip_codes")])#
+dim(combined.data)#
+combined.data = unique(combined.data)#
+dim(combined.data)#
+#
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")#
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y#
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)#
+dim(all_combos)#
+#
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]#
+dim(all_combos)
+setwd('~/Desktop/OReillyHealthcareData/code/Overview/record_linkage/')#
+#
+# DATA PREP#
+#
+require(RecordLinkage)#
+require(data.table)#
+#
+online.data = fread('online_data.csv')#
+neighborhood.data = fread('neighborhood_data.csv')#
+data = fread('data.csv')#
+#
+# convert to caps#
+neighborhood.data = as.data.frame(sapply(neighborhood.data, toupper))#
+online.data = as.data.frame(sapply(online.data, toupper))#
+data = as.data.frame(sapply(data, toupper))#
+#
+# remove punctuation#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub("[[:punct:]]", "", x)))#
+#
+# remove whitespace#
+data[, c("firstname", "surname")] <- as.data.frame(sapply(data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+neighborhood.data[, c("firstname", "surname")] <- as.data.frame(sapply(neighborhood.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+online.data[, c("firstname", "surname")] <- as.data.frame(sapply(online.data[, c("firstname", "surname")], function(x) gsub(" ", "", x)))#
+#
+# empirically, typos occur more frequently later in words than earlier, so we 'block' on first letter of first and last names#
+data$initials <- paste(substring(data$firstname,1,1), substring(data$surname, 1, 1), sep = '')#
+neighborhood.data$initials <- paste(substring(neighborhood.data$firstname,1,1), substring(neighborhood.data$surname, 1, 1), sep = '')#
+online.data$initials <- paste(substring(online.data$firstname,1,1), substring(online.data$surname, 1, 1), sep = '')#
+#DETERMINISTIC HEURISTIC RECORD LINKAGE#
+#
+# if first names and birthdate matche#
+combined.data.using.firstname = merge(data, online.data, by = c("firstname", "birthdate"))#
+combined.data.using.firstname$surname = combined.data.using.firstname$surname.x#
+#
+# if last name and birthdate matches#
+combined.data.using.surname = merge(data, online.data, by = c("surname", "birthdate"))#
+combined.data.using.surname$firstname = combined.data.using.surname$firstname.x#
+#
+# combine both options (since it's either or)#
+combined.data = rbind(combined.data.using.firstname[, c("firstname", "surname", "birthdate", "zip_codes")], combined.data.using.surname[, c("firstname", "surname", "birthdate", "zip_codes")])#
+dim(combined.data)#
+combined.data = unique(combined.data)#
+dim(combined.data)#
+#
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)
+all_combos$birthdate.xx = as.Date(all_combos$birthdate.x, format = "%m/%d/%y")
+head(all_combos)
+all_combos$birthdate.xxx = as.Date(all_combos$birthdate.x, format = "%m/%d/%Y")
+head(all_combos)
+as.Date()
+as.Date('now')
+as.Date('2017')
+as.Date('2017-1-1')
+a = as.Date('2017-1-1')
+a
+a$year
+a = as.POSIXlt(as.Date('2017-1-1') )
+a
+a$year
+a$year = a$year - 100
+a
+as.Date(a)
+class(all_combos)
+all_combos = as.data.table(all_combos)
+al_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+all_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+future_to_past <- function(d) {#
+	t = as.POSIXlt(d)#
+	if (t$year > 117) {#
+		t$year = t$year - 100#
+	}#
+	as.Date(t)#
+}
+all_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%Y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")
+al_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+all_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+all_combos = as.data.table(all_combos)#
+al_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+all_combos = as.data.table(all_combos)#
+all_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]
+head(all_combos)
+a = as.POSIXlt(as.Date('2017-1-1') )
+a = as.POSIXlt(as.Date('50-1-1') )
+a
+a = as.Date('50-1-1')
+a
+a = as.Date('1/1/50')
+a = as.Date('1/1/50', format = '%m/%d/%y')
+a
+a = as.POSIXlt(as.Date('1/1/50', format = '%m/%d/%y'))
+a
+as.Date(a)
+a = as.Date('1/1/50', format = '%m/%d/%y')
+future_to_past(a)
+#DETERMINISTIC HEURISTIC RECORD LINKAGE#
+#
+# if first names and birthdate matche#
+combined.data.using.firstname = merge(data, online.data, by = c("firstname", "birthdate"))#
+combined.data.using.firstname$surname = combined.data.using.firstname$surname.x#
+#
+# if last name and birthdate matches#
+combined.data.using.surname = merge(data, online.data, by = c("surname", "birthdate"))#
+combined.data.using.surname$firstname = combined.data.using.surname$firstname.x#
+#
+# combine both options (since it's either or)#
+combined.data = rbind(combined.data.using.firstname[, c("firstname", "surname", "birthdate", "zip_codes")], combined.data.using.surname[, c("firstname", "surname", "birthdate", "zip_codes")])#
+dim(combined.data)#
+combined.data = unique(combined.data)#
+dim(combined.data)#
+#
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos = as.data.table(all_combos)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%Y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")#
+#
+# if you look, some of the birthdays are in the future!#
+future_to_past <- function(d) {#
+	t = as.POSIXlt(d)#
+	if (t$year > 117) {#
+		t$year = t$year - 100#
+	}#
+	as.Date(t)#
+}#
+#
+# this is very slow, don't need to run because we only care about differences in time#
+all_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]#
+all_combos[, birthdate.x := sapply(birthdate.y, future_to_past)]
+head(all_combos)
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos = as.data.table(all_combos)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%Y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y#
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)#
+dim(all_combos)#
+#
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]#
+dim(all_combos)
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos = as.data.table(all_combos)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%Y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y#
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)
+head(all_combos)
+head(all_combos, 100)
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos = as.data.table(all_combos)
+head(all_combos)
+head(all_combos, 200)
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")
+head(all_combos, 200)
+# if you look, some of the birthdays are in the future!#
+future_to_past <- function(d) {#
+	t = as.POSIXlt(d)#
+	if (t$year > 117) {#
+		t$year = t$year - 100#
+	}#
+	as.Date(t)#
+}#
+#
+# this is very slow, don't need to run because we only care about differences in time#
+all_combos[, birthdate.x := sapply(birthdate.x, future_to_past)]#
+all_combos[, birthdate.y := sapply(birthdate.y, future_to_past)]
+head(all_combos)
+# combine both options (since it's either or)#
+combined.data = rbind(combined.data.using.firstname[, c("firstname", "surname", "birthdate", "zip_codes")], combined.data.using.surname[, c("firstname", "surname", "birthdate", "zip_codes")])#
+dim(combined.data)#
+combined.data = unique(combined.data)#
+dim(combined.data)#
+#
+# if initials match plus birthday is within 1 week#
+online.data = online.data[1:1000, ] # to keep it small#
+all_combos = merge(data, online.data, by = "initials", allow.cartesian = TRUE)#
+all_combos = as.data.table(all_combos)#
+all_combos$birthdate.x = as.Date(all_combos$birthdate.x, format = "%m/%d/%y")#
+all_combos$birthdate.y = as.Date(all_combos$birthdate.y, format = "%m/%d/%y")#
+#
+# if you look, some of the birthdays are in the future!#
+# not a problem for our application, but otherwise you need to #
+#
+all_combos$birthday.delta = all_combos$birthdate.x - all_combos$birthdate.y#
+all_combos$birthday.delta = as.numeric(all_combos$birthday.delta)#
+dim(all_combos)
+all_combos = all_combos[all_combos$birthday.delta < 7 & all_combos$birthday.delta > -7, ]#
+dim(all_combos)
+head(all_combos)
+all_combos = all_combos[with(all_combos, order(surname.x, firstname.x)), ]#
+dim(all_combos)
+dim(unique(all_combos[, c('firstname.x', 'surname.x'), with = FALSE]))#
+all_combos[all_combos$surname.x == 'BROWN', ]
+duplicated.indices = which(duplicated(all_combos[, c('firstname.x', 'surname.x')]))#
+all_combos[duplicated.indices, ]
+dim(all_combos)
+dim(unique(all_combos))
+dim(unique(all_combos[, .(firstname.x, surname.x)]))
+dim(unique(all_combos[, .(firstname.x, surname.x)]))
+# create comparison vectors for pairs for data and neighborhood data #
+comp <- compare.linkage(data[, -3], neighborhood.data, blockfld = c("zip_codes", "initials"), strcmp = TRUE)#
+print(head(comp$pairs))
+em.result <- emWeights(comp, cutoff = 0.8)#
+summary(em.result)
+em.result <- emWeights(comp, cutoff = 0.8)#
+summary(em.result)
+neighborhood.pairs = getPairs(em.result)#
+head(neighborhood.pairs)
+head(neighborhood.pairs, 100)
+neighborhood.pairs
+class(neighborhood.pairs)
+names(neighborhood.pairs)
+head(neighborhood.pairs[neighborhood.pairs$Weight < 4])
+neighborhood.pairs = as.data.table(neighborhood.pairs)
+head(neighborhood.pairs[Weight < TARGET_WEIGHT])
+TARGET_WEIGHT = 4#
+head(neighborhood.pairs[Weight < TARGET_WEIGHT])
+class(neighborhood.pairs$Weight)
+neighborhood.pairs[, Weight := as.numeric(Weight)]
+TARGET_WEIGHT = 4#
+head(neighborhood.pairs[Weight < TARGET_WEIGHT])
+neighborhood.pairs = getPairs(em.result)#
+head(neighborhood.pairs)#
+names(neighborhood.pairs)
+TARGET_WEIGHT = 4#
+neighborhood.pairs[neighborhood.pairs$Weight < 4]
+head(comp$pairs)
+summary(comp$pairs$firstname)
+summary(comp$pairs$surname)
+em.result <- emWeights(comp, cutoff = 0.8)#
+summary(em.result)
+neighborhood.pairs = getPairs(em.result)#
+head(neighborhood.pairs)#
+names(neighborhood.pairs)
+neighborhood.pairs
+neighborhood.pairs[1:10]
+neighborhood.pairs[1:10,]
+neighborhood.pairs[1:10,]
+neighborhood.pairs[1000:1010,]
+neighborhood.pairs[2000:2010,]
+summary(em.result)
+# finalize pairings#
+final.pairs <- getPairs(em.result, max.weight = 5.5, min.weight = 4#
+head(final.pairs)
+final.pairs <- getPairs(em.result, max.weight = 5.5, min.weight = 4)#
+head(final.pairs)
+tail(final.pairs)
+neighborhood.pairs[1:10,]#
+LOW_WEIGHT = 4#
+HIGH_WEIGHT = 4.5#
+neighnorhood.pairs[neighborhood.pairs$Weight > LOW_WEIGHT && neighborhood.pairs < HIGH_WEIGHT]
+neighborhood.pairs[neighborhood.pairs$Weight > LOW_WEIGHT && neighborhood.pairs < HIGH_WEIGHT]
+neighborhood.pairs[as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT && as.numeric(neighborhood.pairs < HIGH_WEIGHT)]
+neighborhood.pairs[as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT && as.numeric(neighborhood.pairs$Weight < HIGH_WEIGHT)]
+neighborhood.pairs[as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT & as.numeric(neighborhood.pairs$Weight < HIGH_WEIGHT)]
+neighborhood.pairs[as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT & as.numeric(neighborhood.pairs$Weight) < HIGH_WEIGHT]
+neighborhood.pairs[as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT]
+as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT
+neighborhood.pairs[as.numeric(neighborhood.pairs$Weight) > LOW_WEIGHT]
+as.numeric(neighborhood.pairs$Weight)[1:10]
+neighborhood.pairs$Weight[1:10]
+neighborhood.pairs[1:10,]
+dim(neighborhood.pairs)
+›# finalize pairings#
+final.pairs <- getPairs(em.result, max.weight = 5.5, min.weight = 4)#
+head(final.pairs)
+tail(final.pairs)

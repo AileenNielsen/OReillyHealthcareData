@@ -1,0 +1,32 @@
+digraph Tree {
+node [shape=box, style="filled", color="black"] ;
+0 [label="thal <= 4.5\ngini = 0.497\nsamples = 297\nvalue = [160, 137]\nclass = no disease", fillcolor="#e5813925"] ;
+1 [label="ca <= 0.5\ngini = 0.3494\nsamples = 164\nvalue = [127, 37]\nclass = no disease", fillcolor="#e58139b5"] ;
+0 -> 1 [labeldistance=2.5, labelangle=45, headlabel="True"] ;
+2 [label="trestbps <= 157.0\ngini = 0.2005\nsamples = 115\nvalue = [102, 13]\nclass = no disease", fillcolor="#e58139de"] ;
+1 -> 2 ;
+3 [label="gini = 0.1515\nsamples = 109\nvalue = [100, 9]\nclass = no disease", fillcolor="#e58139e8"] ;
+2 -> 3 ;
+4 [label="gini = 0.4444\nsamples = 6\nvalue = [2, 4]\nclass = disease", fillcolor="#399de57f"] ;
+2 -> 4 ;
+5 [label="cp <= 3.5\ngini = 0.4998\nsamples = 49\nvalue = [25, 24]\nclass = no disease", fillcolor="#e581390a"] ;
+1 -> 5 ;
+6 [label="gini = 0.3662\nsamples = 29\nvalue = [22, 7]\nclass = no disease", fillcolor="#e58139ae"] ;
+5 -> 6 ;
+7 [label="gini = 0.255\nsamples = 20\nvalue = [3, 17]\nclass = disease", fillcolor="#399de5d2"] ;
+5 -> 7 ;
+8 [label="cp <= 3.5\ngini = 0.3731\nsamples = 133\nvalue = [33, 100]\nclass = disease", fillcolor="#399de5ab"] ;
+0 -> 8 [labeldistance=2.5, labelangle=-45, headlabel="False"] ;
+9 [label="ca <= 0.5\ngini = 0.499\nsamples = 44\nvalue = [23, 21]\nclass = no disease", fillcolor="#e5813916"] ;
+8 -> 9 ;
+10 [label="gini = 0.417\nsamples = 27\nvalue = [19, 8]\nclass = no disease", fillcolor="#e5813994"] ;
+9 -> 10 ;
+11 [label="gini = 0.3599\nsamples = 17\nvalue = [4, 13]\nclass = disease", fillcolor="#399de5b1"] ;
+9 -> 11 ;
+12 [label="oldpeak <= 0.55\ngini = 0.1995\nsamples = 89\nvalue = [10, 79]\nclass = disease", fillcolor="#399de5df"] ;
+8 -> 12 ;
+13 [label="gini = 0.4717\nsamples = 21\nvalue = [8, 13]\nclass = disease", fillcolor="#399de562"] ;
+12 -> 13 ;
+14 [label="gini = 0.0571\nsamples = 68\nvalue = [2, 66]\nclass = disease", fillcolor="#399de5f7"] ;
+12 -> 14 ;
+}
