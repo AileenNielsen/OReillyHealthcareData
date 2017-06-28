@@ -12,3 +12,5 @@ unique(data[order(cluster)])
 
 data[, lapply(.SD, mean), by = cluster]
 
+clusters$modes
+
